@@ -7,6 +7,7 @@ use mdbook::preprocess::{Preprocessor, PreprocessorContext};
 use pathdiff::diff_paths;
 use regex::Regex;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 /// The preprocessor name.
@@ -14,18 +15,52 @@ const NAME: &str = "numthm";
 
 /// An environment handled by the preprocessor.
 struct Env {
-    /// The key to match to detect the environment, e.g. "thm".
-    key: String,
     /// The name to display in the header, e.g. "Theorem".
     name: String,
     /// The markdown emphasis delimiter to apply to the header, e.g. "**" for bold.
     emph: String,
 }
 
+impl Env {
+    fn create(name: &str, emph: &str) -> Self {
+        Env {
+            name: name.to_string(),
+            emph: emph.to_string(),
+        }
+    }
+}
+
+/// Environment collection
+struct EnvMap(HashMap<String, Env>);
+
+impl Default for EnvMap {
+    fn default() -> Self {
+        let mut envs: HashMap<String, Env> = HashMap::new();
+        envs.insert("thm".to_string(), Env::create("Theorem", "**"));
+        envs.insert("lem".to_string(), Env::create("Lemma", "**"));
+        envs.insert("prop".to_string(), Env::create("Proposition", "**"));
+        envs.insert("def".to_string(), Env::create("Definition", "**"));
+        envs.insert("rem".to_string(), Env::create("Remark", "**"));
+        EnvMap(envs)
+    }
+}
+
+impl Deref for EnvMap {
+    type Target = HashMap<String, Env>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for EnvMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// A preprocessor for automatically numbering theorems, lemmas, etc.
 pub struct NumThmPreprocessor {
     /// The list of environments handled by the preprocessor.
-    envs: Vec<Env>,
+    envs: EnvMap,
     /// Whether theorem numbers must be prefixed by the section number.
     with_prefix: bool,
 }
@@ -49,15 +84,15 @@ impl NumThmPreprocessor {
             pre.with_prefix = *b;
         }
 
-        if let Some(toml::Value::Array(array)) = ctx.config.get("preprocessor.numthm.custom_environments") {
+        if let Some(toml::Value::Array(array)) =
+            ctx.config.get("preprocessor.numthm.custom_environments")
+        {
             for array_entry in array {
                 if let toml::Value::Array(env_params) = array_entry {
-                    if let [toml::Value::String(key), toml::Value::String(name), toml::Value::String(emph)] = &env_params[0..3] {
-                        pre.envs.push(Env {
-                            key: key.to_string(),
-                            name: name.to_string(),
-                            emph: emph.to_string(),
-                        })
+                    if let [toml::Value::String(key), toml::Value::String(name), toml::Value::String(emph)] =
+                        &env_params[0..3]
+                    {
+                        pre.envs.insert(key.to_string(), Env::create(name, emph));
                     }
                 }
             }
@@ -69,38 +104,8 @@ impl NumThmPreprocessor {
 
 impl Default for NumThmPreprocessor {
     fn default() -> Self {
-        let thm: Env = Env {
-            key: "thm".to_string(),
-            name: "Theorem".to_string(),
-            emph: "**".to_string(),
-        };
-
-        let lem: Env = Env {
-            key: "lem".to_string(),
-            name: "Lemma".to_string(),
-            emph: "**".to_string(),
-        };
-
-        let prop: Env = Env {
-            key: "prop".to_string(),
-            name: "Proposition".to_string(),
-            emph: "**".to_string(),
-        };
-
-        let def: Env = Env {
-            key: "def".to_string(),
-            name: "Definition".to_string(),
-            emph: "**".to_string(),
-        };
-
-        let rem: Env = Env {
-            key: "rem".to_string(),
-            name: "Remark".to_string(),
-            emph: "*".to_string(),
-        };
-
         Self {
-            envs: vec![thm, lem, prop, def, rem],
+            envs: EnvMap::default(),
             with_prefix: false,
         }
     }
@@ -128,10 +133,13 @@ impl Preprocessor for NumThmPreprocessor {
                         String::new()
                     };
                     let path = chapter.path.as_ref().unwrap();
-                    for env in &self.envs {
-                        chapter.content =
-                            find_and_replace_envs(&chapter.content, &prefix, path, env, &mut refs);
-                    }
+                    chapter.content = find_and_replace_envs(
+                        &chapter.content,
+                        &prefix,
+                        path,
+                        &self.envs,
+                        &mut refs,
+                    );
                 }
             }
         });
@@ -159,24 +167,35 @@ fn find_and_replace_envs(
     s: &str,
     prefix: &str,
     path: &Path,
-    env: &Env,
+    envs: &EnvMap,
     refs: &mut HashMap<String, LabelInfo>,
 ) -> String {
-    let mut ctr = 0;
+    let mut counter: HashMap<String, u32> = envs.iter().map(|(k, _)| (k.clone(), 0)).collect();
 
-    let key = &env.key;
-    let name = &env.name;
-    let emph = &env.emph;
-
-    let mut pattern = r"\{\{".to_string();
-    pattern.push_str(key);
-    pattern.push_str(r"\}\}(\{(?P<label>.*?)\})?(\[(?P<title>.*?)\])?");
-    // see https://regex101.com/ for an explanation of the regex "\{\{key\}\}\{(?P<label>.*?)\}(\[(?P<title>.*?)\])?"
+    let keys = envs
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<&str>>()
+        .join("|");
+    let pattern = format!(
+        r"\{{\{{(?P<key>{})\}}\}}(\{{(?P<label>.*?)\}})?(\[(?P<title>.*?)\])?",
+        keys
+    );
+    // see https://regex101.com/ for an explanation of the regex "\{\{(?P<key>key)\}\}\{(?P<label>.*?)\}(\[(?P<title>.*?)\])?"
     // matches {{key}}{label}[title] where {label} and [title] are optional
     let re: Regex = Regex::new(pattern.as_str()).unwrap();
 
     re.replace_all(s, |caps: &regex::Captures| {
-        ctr += 1;
+        // key must have been matched
+        let key = caps.name("key").unwrap().as_str();
+
+        // key is absolutely part of env, so unwrap should be ok
+        let env = envs.get(key).unwrap();
+        let name = &env.name;
+        let emph = &env.emph;
+        let ctr = counter.get_mut(key).unwrap();
+        *ctr += 1;
+
         let anchor = match caps.name("label") {
             Some(match_label) => {
                 // if a label is given, we must update the hashmap
@@ -268,16 +287,7 @@ mod test {
     const SECNUM: &str = "1.2.";
 
     lazy_static! {
-        static ref THM: Env = Env {
-            key: "thm".to_string(),
-            name: "Theorem".to_string(),
-            emph: "**".to_string(),
-        };
-        static ref PROP: Env = Env {
-            key: "prop".to_string(),
-            name: "Proposition".to_string(),
-            emph: "**".to_string(),
-        };
+        static ref ENVMAP: EnvMap = EnvMap::default();
         static ref PATH: PathBuf = "crypto/groups.md".into();
     }
 
@@ -285,8 +295,20 @@ mod test {
     fn wo_label_wo_title() {
         let mut refs = HashMap::new();
         let input = String::from(r"{{prop}}");
-        let output = find_and_replace_envs(&input, SECNUM, &PATH, &PROP, &mut refs);
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &ENVMAP, &mut refs);
         let expected = String::from("**Proposition 1.2.1.**");
+        assert_eq!(output, expected);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn wo_label_wo_title_replace_default() {
+        let mut env_map = EnvMap::default();
+        env_map.insert(String::from("prop"), Env::create("Proposal", "*"));
+        let mut refs = HashMap::new();
+        let input = String::from(r"{{prop}}");
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &env_map, &mut refs);
+        let expected = String::from("*Proposal 1.2.1.*");
         assert_eq!(output, expected);
         assert!(refs.is_empty());
     }
@@ -295,7 +317,7 @@ mod test {
     fn with_label_wo_title() {
         let mut refs = HashMap::new();
         let input = String::from(r"{{prop}}{prop:lagrange}");
-        let output = find_and_replace_envs(&input, SECNUM, &PATH, &PROP, &mut refs);
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &ENVMAP, &mut refs);
         let expected = String::from(
             "<a name=\"prop:lagrange\"></a>\n\
             **Proposition 1.2.1.**",
@@ -316,7 +338,7 @@ mod test {
     fn wo_label_with_title() {
         let mut refs = HashMap::new();
         let input = String::from(r"{{prop}}[Lagrange Theorem]");
-        let output = find_and_replace_envs(&input, SECNUM, &PATH, &PROP, &mut refs);
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &ENVMAP, &mut refs);
         let expected = String::from("**Proposition 1.2.1 (Lagrange Theorem).**");
         assert_eq!(output, expected);
         assert!(refs.is_empty());
@@ -326,7 +348,7 @@ mod test {
     fn with_label_with_title() {
         let mut refs = HashMap::new();
         let input = String::from(r"{{prop}}{prop:lagrange}[Lagrange Theorem]");
-        let output = find_and_replace_envs(&input, SECNUM, &PATH, &PROP, &mut refs);
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &ENVMAP, &mut refs);
         let expected = String::from(
             "<a name=\"prop:lagrange\"></a>\n\
             **Proposition 1.2.1 (Lagrange Theorem).**",
@@ -340,8 +362,7 @@ mod test {
         let input = String::from(
             r"{{prop}}{prop:lagrange}[Lagrange Theorem] {{thm}}{prop:lagrange}[Another Lagrange Theorem]",
         );
-        let output = find_and_replace_envs(&input, SECNUM, &PATH, &PROP, &mut refs);
-        let output = find_and_replace_envs(&output, SECNUM, &PATH, &THM, &mut refs);
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &ENVMAP, &mut refs);
         let expected = String::from(
             "<a name=\"prop:lagrange\"></a>\n\
             **Proposition 1.2.1 (Lagrange Theorem).** \
@@ -357,7 +378,7 @@ mod test {
         let mut refs = HashMap::new();
         let input =
             String::from(r"{{prop}}{prop:lagrange}[Lagrange Theorem] {{ref: prop:lagrange}}");
-        let output = find_and_replace_envs(&input, SECNUM, &PATH, &PROP, &mut refs);
+        let output = find_and_replace_envs(&input, SECNUM, &PATH, &ENVMAP, &mut refs);
         let output = find_and_replace_refs(&output, &PATH, &refs);
         let expected = String::from(
             "<a name=\"prop:lagrange\"></a>\n\
@@ -375,7 +396,7 @@ mod test {
         let label_input = String::from(r"{{prop}}{prop:lagrange}[Lagrange Theorem]");
         let ref_input = String::from(r"{{ref: prop:lagrange}}");
         let _label_output =
-            find_and_replace_envs(&label_input, SECNUM, &label_file, &PROP, &mut refs);
+            find_and_replace_envs(&label_input, SECNUM, &label_file, &ENVMAP, &mut refs);
         let ref_output = find_and_replace_refs(&ref_input, &ref_file, &refs);
         let expected = String::from("[Proposition 1.2.1](../math/groups.md#prop:lagrange)");
         assert_eq!(ref_output, expected);
@@ -389,7 +410,7 @@ mod test {
         let label_input = String::from(r"{{prop}}{prop:lagrange}[Lagrange Theorem]");
         let ref_input = String::from(r"{{ref: prop:lagrange}}");
         let _label_output =
-            find_and_replace_envs(&label_input, SECNUM, &label_file, &PROP, &mut refs);
+            find_and_replace_envs(&label_input, SECNUM, &label_file, &ENVMAP, &mut refs);
         let ref_output = find_and_replace_refs(&ref_input, &ref_file, &refs);
         let expected = String::from("[Proposition 1.2.1](../../algebra/groups.md#prop:lagrange)");
         assert_eq!(ref_output, expected);
@@ -403,7 +424,7 @@ mod test {
         let label_input = String::from(r"{{prop}}{prop:lagrange}[Lagrange Theorem]");
         let ref_input = String::from(r"{{tref: prop:lagrange}}");
         let _label_output =
-            find_and_replace_envs(&label_input, SECNUM, &label_file, &PROP, &mut refs);
+            find_and_replace_envs(&label_input, SECNUM, &label_file, &ENVMAP, &mut refs);
         let ref_output = find_and_replace_refs(&ref_input, &ref_file, &refs);
         let expected = String::from("[Lagrange Theorem](../../algebra/groups.md#prop:lagrange)");
         assert_eq!(ref_output, expected);
@@ -417,7 +438,7 @@ mod test {
         let label_input = String::from(r"{{prop}}{prop:lagrange}");
         let ref_input = String::from(r"{{tref: prop:lagrange}}");
         let _label_output =
-            find_and_replace_envs(&label_input, SECNUM, &label_file, &PROP, &mut refs);
+            find_and_replace_envs(&label_input, SECNUM, &label_file, &ENVMAP, &mut refs);
         let ref_output = find_and_replace_refs(&ref_input, &ref_file, &refs);
         let expected = String::from("[Proposition 1.2.1](../../algebra/groups.md#prop:lagrange)");
         assert_eq!(ref_output, expected);
