@@ -6,6 +6,7 @@ use mdbook::errors::Result;
 use mdbook::preprocess::{Preprocessor, PreprocessorContext};
 use pathdiff::diff_paths;
 use regex::Regex;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
@@ -14,10 +15,13 @@ use std::path::{Path, PathBuf};
 const NAME: &str = "numthm";
 
 /// An environment handled by the preprocessor.
+#[derive(Debug, Clone, Deserialize)]
 struct Env {
     /// The name to display in the header, e.g. "Theorem".
+    #[serde(default = "Env::name_default")]
     name: String,
     /// The markdown emphasis delimiter to apply to the header, e.g. "**" for bold.
+    #[serde(default = "Env::emph_default")]
     emph: String,
 }
 
@@ -28,9 +32,16 @@ impl Env {
             emph: emph.to_string(),
         }
     }
+    fn name_default() -> String {
+        String::from("Environment")
+    }
+    fn emph_default() -> String {
+        String::from("**")
+    }
 }
 
 /// Environment collection
+#[derive(Debug, Clone, Deserialize)]
 struct EnvMap(HashMap<String, Env>);
 
 impl Default for EnvMap {
@@ -57,14 +68,6 @@ impl DerefMut for EnvMap {
     }
 }
 
-/// A preprocessor for automatically numbering theorems, lemmas, etc.
-pub struct NumThmPreprocessor {
-    /// The list of environments handled by the preprocessor.
-    envs: EnvMap,
-    /// Whether theorem numbers must be prefixed by the section number.
-    with_prefix: bool,
-}
-
 /// The `LabelInfo` structure contains information for formatting the hyperlink to a specific theorem, lemma, etc.
 #[derive(Debug, PartialEq)]
 struct LabelInfo {
@@ -76,36 +79,63 @@ struct LabelInfo {
     title: Option<String>,
 }
 
+/// A preprocessor for automatically numbering theorems, lemmas, etc.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NumThmPreprocessor {
+    /// The list of environments handled by the preprocessor.
+    environments: EnvMap,
+    /// Whether theorem numbers must be prefixed by the section number.
+    with_prefix: bool,
+}
+
 impl NumThmPreprocessor {
     pub fn new(ctx: &PreprocessorContext) -> Self {
-        let mut pre = Self::default();
+        let mut config = Self::default();
 
-        if let Some(toml::Value::Boolean(b)) = ctx.config.get("preprocessor.numthm.prefix") {
-            pre.with_prefix = *b;
+        let toml_config: &toml::value::Table = ctx.config.get_preprocessor("numthm").unwrap();
+
+        // Set use of prefix conf.
+        if let Some(b) = toml_config.get("prefix").and_then(toml::Value::as_bool) {
+            config.with_prefix = b;
         }
 
-        if let Some(toml::Value::Array(array)) =
-            ctx.config.get("preprocessor.numthm.custom_environments")
+        // Get environments table
+        if let Some(envs) = toml_config
+            .get("environments")
+            .and_then(toml::Value::as_table)
         {
-            for array_entry in array {
-                if let toml::Value::Array(env_params) = array_entry {
-                    if let [toml::Value::String(key), toml::Value::String(name), toml::Value::String(emph)] =
-                        &env_params[0..3]
-                    {
-                        pre.envs.insert(key.to_string(), Env::create(name, emph));
+            for (key, value) in envs.iter() {
+                // Update from entries, but only if data is available
+                if let Some(entry) = toml::Value::as_table(value) {
+                    let name = entry.get("name").and_then(toml::Value::as_str);
+                    let emph = entry.get("emph").and_then(toml::Value::as_str);
+
+                    if let Some(env) = config.environments.get_mut(key) {
+                        if let Some(v) = name {
+                            env.name = v.to_string();
+                        }
+
+                        if let Some(v) = emph {
+                            env.emph = v.to_string();
+                        }
+                    } else {
+                        config.environments.insert(
+                            String::from(key),
+                            Env::create(name.unwrap_or("Environment"), emph.unwrap_or("**")),
+                        );
                     }
                 }
             }
         }
 
-        pre
+        config
     }
 }
 
 impl Default for NumThmPreprocessor {
     fn default() -> Self {
         Self {
-            envs: EnvMap::default(),
+            environments: EnvMap::default(),
             with_prefix: false,
         }
     }
@@ -137,7 +167,7 @@ impl Preprocessor for NumThmPreprocessor {
                         &chapter.content,
                         &prefix,
                         path,
-                        &self.envs,
+                        &self.environments,
                         &mut refs,
                     );
                 }
