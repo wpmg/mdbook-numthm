@@ -130,7 +130,8 @@ Consider for example the following configuration:
 [preprocessor.numthm.environments]
 conj = {name = "conjecture", emph = "*"}
 ax = {name = "axiom", emph = "**"}
-thm = {emph = "*"} # redefine a builtin
+thm = {emph = "*"}    # redefine a builtin
+lem = {ignore = true} # ignore parsing an environment (builtin or not)
 ```
 
 It defines two new environments:

@@ -107,6 +107,14 @@ impl NumThmPreprocessor {
             for (key, value) in envs.iter() {
                 // Update from entries, but only if data is available
                 if let Some(entry) = toml::Value::as_table(value) {
+                    // Allow removal of entry
+                    if let Some(ignore) = entry.get("ignore").and_then(toml::Value::as_bool) {
+                        if ignore {
+                            config.environments.remove(key);
+                            continue;
+                        }
+                    }
+
                     let name = entry.get("name").and_then(toml::Value::as_str);
                     let emph = entry.get("emph").and_then(toml::Value::as_str);
 
