@@ -80,7 +80,7 @@ struct LabelInfo {
 }
 
 /// A preprocessor for automatically numbering theorems, lemmas, etc.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct NumThmPreprocessor {
     /// The list of environments handled by the preprocessor.
     environments: EnvMap,
@@ -137,15 +137,6 @@ impl NumThmPreprocessor {
         }
 
         config
-    }
-}
-
-impl Default for NumThmPreprocessor {
-    fn default() -> Self {
-        Self {
-            environments: EnvMap::default(),
-            with_prefix: false,
-        }
     }
 }
 
