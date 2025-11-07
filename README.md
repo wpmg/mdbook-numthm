@@ -134,8 +134,6 @@ thm = {emph = "*"}    # redefine a builtin
 lem = {ignore = true} # ignore parsing an environment (builtin or not)
 ```
 
-It defines two new environments:
-
 It does the following:
 
 - define a new "conjecture" environment with key `conj`, name "Conjecture", and italic emphasis,
