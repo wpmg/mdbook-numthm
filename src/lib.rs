@@ -51,7 +51,7 @@ impl Default for EnvMap {
         envs.insert("lem".to_string(), Env::create("Lemma", "**"));
         envs.insert("prop".to_string(), Env::create("Proposition", "**"));
         envs.insert("def".to_string(), Env::create("Definition", "**"));
-        envs.insert("rem".to_string(), Env::create("Remark", "**"));
+        envs.insert("rem".to_string(), Env::create("Remark", "*"));
         EnvMap(envs)
     }
 }
