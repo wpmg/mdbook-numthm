@@ -210,7 +210,7 @@ fn find_and_replace_envs(
         r"\{{\{{(?P<key>{})\}}\}}(\{{(?P<label>.*?)\}})?(\[(?P<title>.*?)\])?",
         keys
     );
-    // see https://regex101.com/ for an explanation of the regex "\{\{(?P<key>key)\}\}\{(?P<label>.*?)\}(\[(?P<title>.*?)\])?"
+    // see https://regex101.com/ for an explanation of the regex "\{\{(?P<key>key1|key2)\}\}(\{(?P<label>.*?)\})?(\[(?P<title>.*?)\])?"
     // matches {{key}}{label}[title] where {label} and [title] are optional
     let re: Regex = Regex::new(pattern.as_str()).unwrap();
 
