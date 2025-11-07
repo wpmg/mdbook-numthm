@@ -136,7 +136,12 @@ lem = {ignore = true} # ignore parsing an environment (builtin or not)
 
 It defines two new environments:
 
-- a "conjecture" environment with key `conj`, name "conjecture", and italic emphasis,
+It does the following:
+
+- define a new "conjecture" environment with key `conj`, name "Conjecture", and italic emphasis,
+- define a new "axiom" environment with key `ax`, name "Axiom", and bold emphasis,
+- redefine the builtin "theorem" environment by changing emphasis to italic,
+- instruct the preprocessor to ignore all "lemma" environments.
 
 ## Configuration
 
