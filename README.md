@@ -128,8 +128,8 @@ Consider for example the following configuration:
 
 ```toml
 [preprocessor.numthm.environments]
-conj = {name = "conjecture", emph = "*"}
-ax = {name = "axiom", emph = "**"}
+conj = {name = "Conjecture", emph = "*"}
+ax = {name = "Axiom", emph = "**"}
 thm = {emph = "*"}    # redefine a builtin
 lem = {ignore = true} # ignore parsing an environment (builtin or not)
 ```
